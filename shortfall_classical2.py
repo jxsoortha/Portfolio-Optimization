@@ -113,15 +113,14 @@ for i in range(n_assets):
         return_matrix[i,j] = (assets[i][j+1] - assets[i][j]) / assets[i][j]
 
 
-T = 1
+T = 32
 time_window = 100
 
-epi = 0.05
+epi = 0.02
 
 solution_set = []
-
-for t in range(T):
-    t = 15
+W = []
+for t in range(1,T):
     print("-----------------At T = ", t,"-----------------")
     starting_index = return_matrix.shape[1] - (t+1) * time_window
     ending_index = return_matrix.shape[1] - t * time_window 
@@ -132,20 +131,23 @@ for t in range(T):
     EST = sigma_spy_t/sigma_2008 * EST_2008
     C = np.asmatrix(np.cov(return_matrix[:,starting_index:ending_index]))
     p = np.mean(mu)
+    if p < 0:
+        p = 0.99 * np.max(mu)
     r = check_trivial_answer(n_assets,mu,EST,return_matrix[:,starting_index:ending_index])
     if r != -1:
         print("Just invest everything to the ", r+1, "-th asset")
-        break
+        continue
     ite = 1
 
-    while ite < 200:
+    while ite < 500:
         print('-----iteration ',ite,' -----')
         ite += 1
         w = cp.Variable(n_assets)
         prob = cp.Problem(cp.Minimize((1/2)*cp.quad_form(w,C)),[cp.sum(w) == 1, w >= 0, mu.T @ w == p])
         prob.solve()
         w = w.value
-        print("target profit is: ", p)
+        print("target return is: ", p)
+        print("variance is: ", 2 * prob.value)
         print("the weights are:", w)
         w_v = w @ return_matrix[:,starting_index:ending_index]
         length = int(np.floor(alpha*len(w_v)))-1
@@ -154,21 +156,28 @@ for t in range(T):
         print("ES ratio: ", ESt/EST)
         if ESt/EST > 1 + epi:
             if p >= 0:
-                p *= 0.98
+                p -= 0.02 * p
             else:
-                p *= 1.02
+                p += 0.02 * p
+                
         elif ESt/EST < 1 - epi:
-            if p < 0:
-                p *= 0.98
+            if p >= 0:
+                p += 0.02 * p
             else:
-                p *= 1.02
+                p -= 0.02 * p
+                
         else:
-            
+            W.append(w)
+            return_std = np.std(w @ return_matrix[:,starting_index:ending_index] )
+            print("ES is: ", ESt)
+            print("Targer ES is: ", EST)
+            print("Sharpe ratio is: ", p/return_std)
             print("Terminated...")
             print()
             print()
             break
 
+print(W)
 
 
 

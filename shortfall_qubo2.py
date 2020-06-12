@@ -5,6 +5,7 @@ from scipy import special
 import dimod
 import neal
 import bottleneck as bn
+from tabu import TabuSampler
 from dwave.system.samplers import DWaveSampler
 from dwave.system.composites import EmbeddingComposite
 
@@ -142,14 +143,13 @@ for i in range(n_assets):
 
 
 
-T = 1
+T = 32
 time_window = 100
-n_digits = 6
-epi = 0.05
-samples = 500
-
-for t in range(T):
-    t = 15
+n_digits = 7
+epi = 0.02
+samples = 3000
+W = []
+for t in range(1,T):
     print("-----------------At T = ", t,"-----------------")
     starting_index = return_matrix.shape[1] - (t+1) * time_window
     ending_index = return_matrix.shape[1] - t * time_window 
@@ -160,35 +160,62 @@ for t in range(T):
     EST = sigma_spy_t/sigma_2008 * EST_2008
     C = np.asmatrix(np.cov(return_matrix[:,starting_index:ending_index]))
     p = np.mean(mu)
+    if p < 0:
+        p = 0.99 * np.max(mu)
     r = check_trivial_answer(n_assets,mu,EST,return_matrix[:,starting_index:ending_index])
     if r != -1:
         print("Just invest everything to the ", r+1, "-th asset")
-        break
+        continue
 
     ite = 1
-    while ite < 100:
+    
+    while ite < 500:
         print('-----iteration ',ite,' -----')
         ite += 1
-        linear_terms, quadratic_terms = build_qubo(10,500000000,1,n_assets,n_digits,C,mu,EST,p)
+        ss = 1 / (np.abs(p) * np.abs(p))
+        sss = 1 / np.abs(p)
+        linear_terms, quadratic_terms = build_qubo(100,10 * ss,sss/5,n_assets,n_digits,C,mu,EST,p)
         bqm = dimod.BinaryQuadraticModel(linear_terms, quadratic_terms, 0, dimod.BINARY)
         #sampler = EmbeddingComposite(DWaveSampler())
-        #sampleset = sampler.sample(bqm, num_reads=samples, chain_strength=100)
+        #sampleset = sampler.sample(bqm, num_reads=samples, chain_strength=20)
         solver = neal.SimulatedAnnealingSampler()
         sampleset = solver.sample(bqm, num_reads=samples)
-        #print(sampleset)
 
         assignments = sampleset.record.sample
         energy = sampleset.record.energy
 
         sorted_assignments = [x for (y,x) in sorted(zip(energy,assignments), key=lambda pair: pair[0])] 
         energy.sort()
+
+        # for k in range(len(sorted_assignments)):
+        #     w = np.zeros(n_assets)
+        #     for j in range(n_assets):
+        #         for m in range(n_digits):
+        #             w[j] += sorted_assignments[k][j*n_digits+m]*(0.5**(m+1))
+            
+        #     for j in range(len(w)):
+        #         w[j] = w[j] / np.sum(w)
+        #     print("target return is: ", p)
+        #     print("computed profit is:", w.T @ mu)
+        #     print("volatility is: ", (0.5 * w.T @ C @ w)[0,0])
+        #     print("the weights are:", w)
+        #     print("---------------------")
+        #     print("---------------------")
+        # exit()
+            
+
         w = np.zeros(n_assets)
         for j in range(n_assets):
             for m in range(n_digits):
                 w[j] += sorted_assignments[0][j*n_digits+m]*(0.5**(m+1))
 
-        print("target profit is: ", p)
+        
+
+        for j in range(len(w)):
+            w[j] = w[j] / np.sum(w)
+        print("target return is: ", p)
         print("computed profit is:", w.T @ mu)
+        print("volatility is: ", (0.5 * w.T @ C @ w)[0,0])
         print("the weights are:", w)
         w_v = w @ return_matrix[:,starting_index:ending_index]
         length = int(np.floor(alpha*len(w_v)))-1
@@ -196,18 +223,28 @@ for t in range(T):
         ESt = np.mean(ESt[0:length])
         print("ES ratio: ", ESt/EST)
         if ESt/EST > 1 + epi:
-            p *= 0.98
+            if p >= 0:
+                p -= 0.02 * p
+            else:
+                p += 0.02 * p
         elif ESt/EST < 1 - epi:
-            p *= 1.02
+            if p >= 0:
+                p += 0.02 * p
+            else:
+                p -= 0.02 * p
         else:
-            
+            W.append(w)
+            return_std = np.std(w @ return_matrix[:,starting_index:ending_index] )
+            print("ES is: ", ESt)
+            print("Targer ES is: ", EST)
+            print("Sharpe ratio is: ", w.T @ mu / return_std)
             print("Terminated...")
             print()
             print()
             break
 
-exit()
 
+print(W)
     # 
     # for i in range(samples):
     #     for j in range(n_assets):
